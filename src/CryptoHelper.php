@@ -8,6 +8,15 @@ namespace AS2;
  */
 class CryptoHelper
 {
+    protected static function stringIsBinary($str): bool
+    {
+        $str = str_ireplace("\t", "", $str);
+        $str = str_ireplace("\n", "", $str);
+        $str = str_ireplace("\r", "", $str);
+
+        return is_string($str) && ctype_print($str) === false;
+    }
+
     /**
      * Extract the message integrity check (MIC) from the digital signature.
      *
@@ -92,7 +101,54 @@ class CryptoHelper
      *
      * @return bool
      */
-    public static function verify($data, $caInfo = null, $rootCerts = null)
+    public static function verify($data, $caInfo = null, $rootCerts = null, $reconstruct = false)
+    {
+        $originalCall = func_get_args();
+
+        if ($reconstruct === true) {
+            $temp = new MimePart($data->getHeaders());
+            foreach ($data->getParts() as $part) {
+                if (self::stringIsBinary($part->getBody())) {
+                    $recreatedPart = new MimePart($part->getHeaders(), Utils::encodeBase64($part->getBody()));
+                    $temp->addPart($recreatedPart);
+                } else {
+                    $temp->addPart($part);
+                }
+            }
+            $data = $temp;
+        }
+
+        if ($data instanceof MimePart) {
+            $data = self::getTempFilename((string) $data);
+        }
+
+        if (!empty($caInfo)) {
+            foreach ((array) $caInfo as $cert) {
+                $rootCerts[] = self::getTempFilename($cert);
+            }
+        }
+
+        $flags = PKCS7_BINARY | PKCS7_NOSIGS;
+
+        // if (empty($rootCerts)) {
+        $flags |= PKCS7_NOVERIFY;
+        // }
+
+        $outFile = self::getTempFilename();
+
+        $out = openssl_pkcs7_verify($data, $flags, $outFile, $rootCerts) === true;
+
+        if ($out === false && $reconstruct === false) {
+            $data2 = $originalCall[0];
+            $caInfo2 = $originalCall[1] ?? null;
+            $rootCerts2 = $originalCall[2] ?? null;
+            $reconstruct2 = true;
+            return self::verify($data2, $caInfo2, $rootCerts2, $reconstruct2);
+        }
+
+        return $out;
+    }
+    /*public static function verify($data, $caInfo = null, $rootCerts = null)
     {
         if ($data instanceof MimePart) {
             $data = self::getTempFilename((string) $data);
@@ -113,7 +169,7 @@ class CryptoHelper
         $outFile = self::getTempFilename();
 
         return openssl_pkcs7_verify($data, $flags, $outFile, $rootCerts) === true;
-    }
+    }*/
 
     /**
      * @param string|MimePart $data
