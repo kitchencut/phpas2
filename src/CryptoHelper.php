@@ -95,22 +95,21 @@ class CryptoHelper
     }
 
     /**
-     * @param string|MimePart $data
-     * @param array|null      $caInfo    Information about the trusted CA certificates to use in the verification process
-     * @param array           $rootCerts
+     * @param string|MimePart   $data
+     * @param array|null        $caInfo    Information about the trusted CA certificates to use in the verification process
+     * @param array             $rootCerts
+     * @param bool              $encodeData
      *
      * @return bool
      */
-    public static function verify($data, $caInfo = null, $rootCerts = null, $reconstruct = false)
+    public static function verify($data, $caInfo = null, $rootCerts = null, $encodeData = false)
     {
-        $originalCall = func_get_args();
-
-        if ($reconstruct === true) {
+        if ($encodeData === true) {
             $temp = new MimePart($data->getHeaders());
             foreach ($data->getParts() as $part) {
                 if (self::stringIsBinary($part->getBody())) {
-                    $recreatedPart = new MimePart($part->getHeaders(), Utils::encodeBase64($part->getBody()));
-                    $temp->addPart($recreatedPart);
+                    $encodedPart = new MimePart($part->getHeaders(), Utils::encodeBase64($part->getBody()));
+                    $temp->addPart($encodedPart);
                 } else {
                     $temp->addPart($part);
                 }
@@ -138,38 +137,19 @@ class CryptoHelper
 
         $out = openssl_pkcs7_verify($data, $flags, $outFile, $rootCerts) === true;
 
-        if ($out === false && $reconstruct === false) {
-            $data2 = $originalCall[0];
-            $caInfo2 = $originalCall[1] ?? null;
-            $rootCerts2 = $originalCall[2] ?? null;
-            $reconstruct2 = true;
-            return self::verify($data2, $caInfo2, $rootCerts2, $reconstruct2);
+        if ($out === false && $encodeData === false) {
+            $originalCall = func_get_args();
+
+            return self::verify(
+                $originalCall[0],
+                $originalCall[1] ?? null,
+                $originalCall[2] ?? null,
+                true
+            );
         }
 
         return $out;
     }
-    /*public static function verify($data, $caInfo = null, $rootCerts = null)
-    {
-        if ($data instanceof MimePart) {
-            $data = self::getTempFilename((string) $data);
-        }
-
-        if (!empty($caInfo)) {
-            foreach ((array) $caInfo as $cert) {
-                $rootCerts[] = self::getTempFilename($cert);
-            }
-        }
-
-        $flags = PKCS7_BINARY | PKCS7_NOSIGS;
-
-        // if (empty($rootCerts)) {
-        $flags |= PKCS7_NOVERIFY;
-        // }
-
-        $outFile = self::getTempFilename();
-
-        return openssl_pkcs7_verify($data, $flags, $outFile, $rootCerts) === true;
-    }*/
 
     /**
      * @param string|MimePart $data
