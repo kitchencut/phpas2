@@ -150,6 +150,22 @@ class ManagementTest extends TestCase
         // var_dump($message->getMdnPayload());
     }
 
+    public function testCreateIfBinaryPartNotBinary(): void
+    {
+        $contents = $this->loadFixture('signed-msg.txt');
+        $payload = MimePart::fromString($contents);
+
+        self::assertNull(MimePart::createIfBinaryPart($payload));
+    }
+
+    public function testCreateIfBinaryPartBinary(): void
+    {
+        $contents = $this->loadFixture('si_signed.mdn');
+        $payload = MimePart::fromString($contents);
+
+        self::assertInstanceOf(MimePart::class, MimePart::createIfBinaryPart($payload));
+    }
+
     // public function testSendMdn()
     // {
     //     $sender   = $this->partnerRepository->findPartnerById('A');

@@ -39,12 +39,8 @@ class CryptoHelperTest extends TestCase
         $this->assertTrue($hasSignature);
     }
 
-    /**
-     * TODO: verify binary data.
-     */
-    public function testVerify()
+    public function testVerifyBase64()
     {
-        // $contents = $this->loadFixture('si_signed.mdn');
         $contents = $this->loadFixture('signed-msg.txt');
         $payload  = MimePart::fromString($contents);
         $certs    = $this->getCerts();
@@ -53,6 +49,17 @@ class CryptoHelperTest extends TestCase
         $this->assertTrue(
             CryptoHelper::verify($payload, $certs['cert'])
         );
+    }
+
+    public function testVerifyBinary()
+    {
+        $contents = $this->loadFixture('si_signed.mdn');
+        $payload = MimePart::fromString($contents);
+
+        $certs = $this->getCerts();
+
+        self::assertTrue($payload->isSigned());
+        self::assertTrue(CryptoHelper::verify($payload, $certs['cert']));
     }
 
     public function testEncrypt()

@@ -86,15 +86,20 @@ class CryptoHelper
     }
 
     /**
-     * @param string|MimePart $data
-     * @param array|null      $caInfo    Information about the trusted CA certificates to use in the verification process
-     * @param array           $rootCerts
+     * @param string|MimePart   $data
+     * @param array|null        $caInfo    Information about the trusted CA certificates to use in the verification process
+     * @param array             $rootCerts
      *
      * @return bool
      */
     public static function verify($data, $caInfo = null, $rootCerts = null)
     {
         if ($data instanceof MimePart) {
+            $temp = MimePart::createIfBinaryPart($data);
+            if ($temp !== null) {
+                $data = $temp;
+            }
+
             $data = self::getTempFilename((string) $data);
         }
 
@@ -112,7 +117,9 @@ class CryptoHelper
 
         $outFile = self::getTempFilename();
 
-        return openssl_pkcs7_verify($data, $flags, $outFile, $rootCerts) === true;
+        $out = openssl_pkcs7_verify($data, $flags, $outFile, $rootCerts) === true;
+
+        return $out;
     }
 
     /**
