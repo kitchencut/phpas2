@@ -8,15 +8,6 @@ namespace AS2;
  */
 class CryptoHelper
 {
-    protected static function stringIsBinary($str): bool
-    {
-        $str = str_ireplace("\t", "", $str);
-        $str = str_ireplace("\n", "", $str);
-        $str = str_ireplace("\r", "", $str);
-
-        return is_string($str) && ctype_print($str) === false;
-    }
-
     /**
      * Extract the message integrity check (MIC) from the digital signature.
      *
@@ -98,26 +89,17 @@ class CryptoHelper
      * @param string|MimePart   $data
      * @param array|null        $caInfo    Information about the trusted CA certificates to use in the verification process
      * @param array             $rootCerts
-     * @param bool              $encodeData
      *
      * @return bool
      */
-    public static function verify($data, $caInfo = null, $rootCerts = null, $encodeData = false)
+    public static function verify($data, $caInfo = null, $rootCerts = null)
     {
-        if ($encodeData === true) {
-            $temp = new MimePart($data->getHeaders());
-            foreach ($data->getParts() as $part) {
-                if (self::stringIsBinary($part->getBody())) {
-                    $encodedPart = new MimePart($part->getHeaders(), Utils::encodeBase64($part->getBody()));
-                    $temp->addPart($encodedPart);
-                } else {
-                    $temp->addPart($part);
-                }
-            }
-            $data = $temp;
-        }
-
         if ($data instanceof MimePart) {
+            $temp = MimePart::createIfBinaryPart($data);
+            if ($temp !== null) {
+                $data = $temp;
+            }
+
             $data = self::getTempFilename((string) $data);
         }
 
@@ -136,17 +118,6 @@ class CryptoHelper
         $outFile = self::getTempFilename();
 
         $out = openssl_pkcs7_verify($data, $flags, $outFile, $rootCerts) === true;
-
-        if ($out === false && $encodeData === false) {
-            $originalCall = func_get_args();
-
-            return self::verify(
-                $originalCall[0],
-                $originalCall[1] ?? null,
-                $originalCall[2] ?? null,
-                true
-            );
-        }
 
         return $out;
     }
