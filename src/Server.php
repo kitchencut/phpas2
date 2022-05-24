@@ -8,10 +8,14 @@ use GuzzleHttp\Psr7\Response;
 use GuzzleHttp\Psr7\ServerRequest;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Log\LoggerInterface;
-use Psr\Log\NullLogger;
+use Psr\Log\LogLevel;
 
 class Server
 {
+	use LoggerTrait {
+		getLogger as traitGetLogger;
+	}
+
     /**
      * @var Management
      */
@@ -26,11 +30,6 @@ class Server
      * @var MessageRepositoryInterface
      */
     protected $messageRepository;
-
-    /**
-     * @var LoggerInterface
-     */
-    protected $logger;
 
     /**
      * Server constructor.
@@ -68,7 +67,8 @@ class Server
                 return new Response(200, [], 'To submit an AS2 message, you must POST the message to this URL.');
             }
 
-            $this->getLogger()->debug(
+            $this->log(
+                LogLevel::DEBUG,
                 sprintf(
                     'Received an HTTP POST from `%s`.',
                     isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : 'Unknown'
@@ -86,14 +86,15 @@ class Server
             $senderId   = $request->getHeaderLine('as2-from');
             $receiverId = $request->getHeaderLine('as2-to');
 
-            $this->getLogger()->debug(sprintf('Check payload to see if its an AS2 Message or ASYNC MDN.'));
+            $this->log(LogLevel::DEBUG, sprintf('Check payload to see if its an AS2 Message or ASYNC MDN.'));
 
             // Load the request header and body as a MIME Email Message
             $payload = MimePart::fromPsrMessage($request);
 
             // If this is an MDN, get the message ID and check if it exists
             if ($payload->isReport()) {
-                $this->getLogger()->info(
+                $this->log(
+                    LogLevel::INFO,
                     sprintf(
                         'Asynchronous MDN received for AS2 message `%s` to organization `%s` from partner `%s`.',
                         $messageId,
@@ -155,7 +156,8 @@ class Server
                         $mdnMessageId = trim($mdn->getHeaderLine('message-id'), '<>');
                         $message->setMdnPayload($mdn->toString());
                         if ($mdnMode === PartnerInterface::MDN_MODE_SYNC) {
-                            $this->getLogger()->debug(
+                            $this->log(
+                                LogLevel::DEBUG,
                                 sprintf(
                                     'Synchronous MDN with id `%s` sent as answer to message `%s`.',
                                     $mdnMessageId,
@@ -165,7 +167,8 @@ class Server
                             $responseHeaders = $mdn->getHeaders();
                             $responseBody    = $mdn->getBody();
                         } else {
-                            $this->getLogger()->debug(
+                            $this->log(
+                                LogLevel::DEBUG,
                                 sprintf(
                                     'Asynchronous MDN with id `%s` sent as answer to message `%s`.',
                                     $mdnMessageId,
@@ -188,7 +191,7 @@ class Server
                 }
             }
         } catch (\Exception $e) {
-            $this->getLogger()->critical($e->getMessage());
+            $this->log(LogLevel::CRITICAL, $e->getMessage());
             if ($message !== null) {
                 // TODO: check
                 // Build the mdn for the message based on processing status
@@ -217,21 +220,7 @@ class Server
             $this->logger = $this->manager->getLogger();
         }
 
-        if (!$this->logger) {
-            $this->logger = new NullLogger();
-        }
-
-        return $this->logger;
-    }
-
-    /**
-     * @return $this
-     */
-    public function setLogger(LoggerInterface $logger)
-    {
-        $this->logger = $logger;
-
-        return $this;
+        return $this->traitGetLogger();
     }
 
     /**

@@ -4,23 +4,18 @@ namespace AS2;
 
 use GuzzleHttp\Client;
 use Psr\Http\Message\ResponseInterface;
-use Psr\Log\LoggerAwareInterface;
-use Psr\Log\LoggerInterface;
-use Psr\Log\NullLogger;
+use Psr\Log\LogLevel;
 
 /**
  * TODO: AS2-Version: 1.1 multiple attachments.
  */
-class Management implements LoggerAwareInterface
+class Management
 {
+    use LoggerTrait;
+
     const AS2_VERSION     = '1.2';
     const EDIINT_FEATURES = 'CEM'; // multiple-attachments,
     const USER_AGENT      = 'PHPAS2';
-
-    /**
-     * @var LoggerInterface
-     */
-    protected $logger;
 
     /**
      * @var Client
@@ -100,7 +95,7 @@ class Management implements LoggerAwareInterface
         $message->setStatus(MessageInterface::STATUS_PENDING);
         $message->setPayload($payload);
 
-        $this->getLogger()->debug('Build the AS2 message to send to the partner');
+        $this->log(LogLevel::DEBUG, 'Build the AS2 message to send to the partner');
 
         // Build the As2 message headers as per specifications
         $as2headers = [
@@ -127,14 +122,14 @@ class Management implements LoggerAwareInterface
 
         // Compress the message before sign if requested in the profile
         if ($compressBeforeSign && $receiver->getCompressionType()) {
-            $this->getLogger()->debug('Compressing outbound message before signing...');
+            $this->log(LogLevel::DEBUG, 'Compressing outbound message before signing...');
             $payload = CryptoHelper::compress($payload, $encoding);
             $message->setCompressed();
         }
 
         // Sign the message if requested in the profile
         if ($signAlgo = $receiver->getSignatureAlgorithm()) {
-            $this->getLogger()->debug('Signing the message using partner key');
+            $this->log(LogLevel::DEBUG, 'Signing the message using partner key');
 
             //            // If MIC content is set, i.e. message has been signed then calculate the MIC
             //            $mdnOptions = Utils::parseHeader($receiver->getMdnOptions());
@@ -146,7 +141,8 @@ class Management implements LoggerAwareInterface
 
             $message->setMic(CryptoHelper::calculateMIC($micContent, $signAlgo));
 
-            $this->getLogger()->debug(
+            $this->log(
+                LogLevel::DEBUG,
                 'Calculate MIC',
                 [
                     'mic' => $message->getMic(),
@@ -166,14 +162,14 @@ class Management implements LoggerAwareInterface
 
         // Compress the message after sign if requested in the profile
         if (!$compressBeforeSign && $receiver->getCompressionType()) {
-            $this->getLogger()->debug('Compressing outbound message after signing...');
+            $this->log(LogLevel::DEBUG, 'Compressing outbound message after signing...');
             $payload = CryptoHelper::compress($payload, $encoding);
             $message->setCompressed();
         }
 
         // Encrypt the message if requested in the profile
         if ($cipher = $receiver->getEncryptionAlgorithm()) {
-            $this->getLogger()->debug('Encrypting the message using partner public key');
+            $this->log(LogLevel::DEBUG, 'Encrypting the message using partner public key');
             $payload = CryptoHelper::encrypt($payload, $receiver->getCertificate(), $cipher);
 
             $message->setEncrypted();
@@ -210,7 +206,7 @@ class Management implements LoggerAwareInterface
 
         $message->setHeaders($as2Message->getHeaderLines());
 
-        $this->getLogger()->debug('AS2 message has been built successfully');
+        $this->log(LogLevel::DEBUG, 'AS2 message has been built successfully');
 
         return $as2Message;
     }
@@ -223,7 +219,8 @@ class Management implements LoggerAwareInterface
      */
     public function processMessage(MessageInterface $message, MimePart $payload)
     {
-        $this->getLogger()->info(
+        $this->log(
+            LogLevel::DEBUG,
             'Begin Processing of received AS2 message',
             [
                 'message_id' => $message->getMessageId(),
@@ -251,7 +248,7 @@ class Management implements LoggerAwareInterface
 
         // Check if payload is encrypted and if so decrypt it
         if ($payload->isEncrypted()) {
-            $this->getLogger()->debug('Inbound AS2 message is encrypted.');
+            $this->log(LogLevel::DEBUG, 'Inbound AS2 message is encrypted.');
             $payload = CryptoHelper::decrypt(
                 $payload,
                 $message->getReceiver()->getCertificate(),
@@ -261,13 +258,13 @@ class Management implements LoggerAwareInterface
                 ]
             );
 
-            $this->getLogger()->debug('The inbound AS2 message data has been decrypted.');
+            $this->log(LogLevel::DEBUG, 'The inbound AS2 message data has been decrypted.');
             $message->setEncrypted();
         }
 
         // Check for compression before signature check
         if ($payload->isCompressed()) {
-            $this->getLogger()->debug('Decompressing received message before checking signature...');
+            $this->log(LogLevel::DEBUG, 'Decompressing received message before checking signature...');
             $payload        = CryptoHelper::decompress($payload);
             $isDecompressed = true;
             $message->setCompressed();
@@ -280,7 +277,7 @@ class Management implements LoggerAwareInterface
 
         // Check if message is signed and if so verify it
         if ($payload->isSigned()) {
-            $this->getLogger()->debug('Message is signed, Verifying it using public key.');
+            $this->log(LogLevel::DEBUG, 'Message is signed, Verifying it using public key.');
 
             $message->setSigned();
 
@@ -297,8 +294,8 @@ class Management implements LoggerAwareInterface
                 throw new \RuntimeException('Signature Verification Failed');
             }
 
-            $this->getLogger()->debug('Digital signature of inbound AS2 message has been verified successful.');
-            $this->getLogger()->debug(
+            $this->log(LogLevel::DEBUG, 'Digital signature of inbound AS2 message has been verified successful.');
+            $this->log(LogLevel::DEBUG,
                 sprintf(
                     'Found %s payload attachments in the inbound AS2 message.',
                     $payload->getCountParts() - 1
@@ -331,7 +328,7 @@ class Management implements LoggerAwareInterface
             if ($isDecompressed) {
                 throw new \RuntimeException('Message has already been decompressed. Per RFC5402 it cannot occur twice.');
             }
-            $this->getLogger()->debug('Decompressing received message after decryption...');
+            $this->log(LogLevel::DEBUG, 'Decompressing received message after decryption...');
             $payload = CryptoHelper::decompress($payload);
             $message->setCompressed();
         }
@@ -379,17 +376,17 @@ class Management implements LoggerAwareInterface
                 throw new \RuntimeException('Message send failed with error');
             }
 
-            $this->getLogger()->debug('AS2 message successfully sent to partner');
+            $this->log(LogLevel::DEBUG, 'AS2 message successfully sent to partner');
 
             // Process the MDN based on the partner profile settings
             if ($mdnMode = $partner->getMdnMode()) {
                 if ($mdnMode === PartnerInterface::MDN_MODE_ASYNC) {
-                    $this->getLogger()->debug('Requested ASYNC MDN from partner, waiting for it');
+                    $this->log(LogLevel::DEBUG, 'Requested ASYNC MDN from partner, waiting for it');
                     $message->setStatus(MessageInterface::STATUS_PENDING);
                 } else {
                     // In case of Synchronous MDN the response content will be the MDN. So process it.
                     // Get the response headers, convert key to lower case for normalization
-                    $this->getLogger()->debug('Synchronous MDN received from partner');
+                    $this->log(LogLevel::DEBUG, 'Synchronous MDN received from partner');
 
                     $body = $response->getBody()->getContents();
 
@@ -399,14 +396,14 @@ class Management implements LoggerAwareInterface
                     $this->processMdn($message, $payload);
                 }
             } else {
-                $this->getLogger()->debug('No MDN needed, File Transferred successfully to the partner');
+                $this->log(LogLevel::DEBUG, 'No MDN needed, File Transferred successfully to the partner');
             }
 
             $message->setStatus(MessageInterface::STATUS_SUCCESS);
 
             return $response;
         } catch (\Exception $e) {
-            $this->getLogger()->critical($e->getMessage());
+            $this->log(LogLevel::CRITICAL, $e->getMessage());
             $message->setStatus(MessageInterface::STATUS_ERROR);
             $message->setStatusMsg($e->getMessage());
         }
@@ -449,13 +446,14 @@ class Management implements LoggerAwareInterface
 
         foreach ($payload->getParts() as $part) {
             if ($part->getParsedHeader('content-type', 0, 0) === 'message/disposition-notification') {
-                $this->getLogger()->debug('Found MDN report for message', [$messageId]);
+                $this->log(LogLevel::DEBUG, 'Found MDN report for message', [$messageId]);
                 try {
                     $bodyPayload = MimePart::fromString($part->getBody());
                     if ($bodyPayload->hasHeader('disposition')) {
                         $mdnStatus = $bodyPayload->getParsedHeader('Disposition', 0, 1);
                         if ($mdnStatus === 'processed') {
-                            $this->getLogger()->debug(
+                            $this->log(
+                                LogLevel::DEBUG,
                                 'Message has been successfully processed, verifying the MIC if present.'
                             );
 
@@ -469,7 +467,7 @@ class Management implements LoggerAwareInterface
                             }
 
                             $message->setMdnStatus(MessageInterface::MDN_STATUS_RECEIVED);
-                            $this->getLogger()->debug('File Transferred successfully to the partner');
+                            $this->log(LogLevel::DEBUG, 'File Transferred successfully to the partner');
                         } else {
                             throw new \RuntimeException('Partner failed to process file. ' . $mdnStatus);
                         }
@@ -477,7 +475,8 @@ class Management implements LoggerAwareInterface
                 } catch (\Exception $e) {
                     $message->setMdnStatus(MessageInterface::MDN_STATUS_ERROR);
                     $message->setStatusMsg($e->getMessage());
-                    $this->getLogger()->error(
+                    $this->log(
+                        LogLevel::ERROR,
                         $e->getMessage(),
                         [
                             'message_id' => $messageId,
@@ -507,7 +506,7 @@ class Management implements LoggerAwareInterface
 
         // In case no MDN is requested exit from process
         if (!$messageHeaders->hasHeader('disposition-notification-to')) {
-            $this->getLogger()->debug('MDN not requested by partner, closing request.');
+            $this->log(LogLevel::DEBUG, 'MDN not requested by partner, closing request.');
 
             return null;
         }
@@ -537,7 +536,7 @@ class Management implements LoggerAwareInterface
         }
 
         $messageId = $message->getMessageId();
-        $this->getLogger()->debug(sprintf('Generating outbound MDN, setting message id to `%s`', $messageId));
+        $this->log(LogLevel::DEBUG, sprintf('Generating outbound MDN, setting message id to `%s`', $messageId));
 
         $boundary      = '=_' . sha1(uniqid('', true));
         $reportHeaders = [
@@ -609,7 +608,7 @@ class Management implements LoggerAwareInterface
 
             $micAlg = isset($notificationOptions[2]) ? reset($notificationOptions[2]) : null;
 
-            $this->getLogger()->debug('Outbound MDN has been signed.');
+            $this->log(LogLevel::DEBUG, 'Outbound MDN has been signed.');
 
             $report = CryptoHelper::sign(
                 $report,
@@ -623,13 +622,13 @@ class Management implements LoggerAwareInterface
             );
         }
 
-        $this->getLogger()->debug(sprintf('Outbound MDN created for AS2 message `%s`.', $messageId));
+        $this->log(LogLevel::DEBUG, sprintf('Outbound MDN created for AS2 message `%s`.', $messageId));
 
         // Is Async mdn is requested mark MDN as pending and return None
         if ($messageHeaders->hasHeader('receipt-delivery-option')) {
             $message->setMdnMode(PartnerInterface::MDN_MODE_ASYNC);
             $message->setMdnStatus(MessageInterface::MDN_STATUS_PENDING);
-            $this->getLogger()->debug('Asynchronous MDN requested, setting status to pending');
+            $this->log(LogLevel::DEBUG, 'Asynchronous MDN requested, setting status to pending');
         } else {
             // Else mark MDN as sent and return the MDN message
             $message->setMdnMode(PartnerInterface::MDN_MODE_SYNC);
@@ -666,12 +665,12 @@ class Management implements LoggerAwareInterface
                 throw new \RuntimeException('Message send failed with error');
             }
 
-            $this->getLogger()->debug('AS2 MDN has been sent.');
+            $this->log(LogLevel::DEBUG, 'AS2 MDN has been sent.');
             $message->setMdnStatus(MessageInterface::MDN_STATUS_SENT);
 
             return $response;
         } catch (\Exception $e) {
-            $this->getLogger()->critical($e->getMessage());
+            $this->log(LogLevel::CRITICAL, $e->getMessage());
             $message->setMdnStatus(MessageInterface::MDN_STATUS_ERROR);
         }
 
@@ -709,27 +708,5 @@ class Management implements LoggerAwareInterface
     public function getOption($name, $default = null)
     {
         return isset($this->options[$name]) ? $this->options[$name] : $default;
-    }
-
-    /**
-     * @return LoggerInterface
-     */
-    public function getLogger()
-    {
-        if (!$this->logger) {
-            $this->logger = new NullLogger();
-        }
-
-        return $this->logger;
-    }
-
-    /**
-     * @return $this
-     */
-    public function setLogger(LoggerInterface $logger)
-    {
-        $this->logger = $logger;
-
-        return $this;
     }
 }
