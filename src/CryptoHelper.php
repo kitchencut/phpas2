@@ -12,8 +12,8 @@ class CryptoHelper
      * Extract the message integrity check (MIC) from the digital signature.
      *
      * @param MimePart|string $payload
-     * @param string          $algo           Default is SHA256
-     * @param bool            $includeHeaders
+     * @param string $algo Default is SHA256
+     * @param bool $includeHeaders
      *
      * @return string
      */
@@ -46,15 +46,17 @@ class CryptoHelper
      * @param string|MimePart $data
      * @param string|resource $cert
      * @param string|resource $privateKey
-     * @param array           $headers
-     * @param array           $micAlgo
+     * @param array $headers
+     * @param array $micAlgo
      *
      * @return MimePart
      */
     public static function sign($data, $cert, $privateKey = null, $headers = [], $micAlgo = null)
     {
-        $data = self::getTempFilename((string) $data);
-        $temp = self::getTempFilename();
+        $filenames = [];
+
+        $data = $filenames[] = self::getTempFilename((string)$data);
+        $temp = $filenames[] = self::getTempFilename();
 
         if (!openssl_pkcs7_sign($data, $temp, $cert, $privateKey, $headers)) {
             throw new \RuntimeException(sprintf('Failed to sign S/Mime message. Error: "%s".', openssl_error_string()));
@@ -82,29 +84,51 @@ class CryptoHelper
             }
         }
 
+        self::purgeTempFiles($filenames);
+
         return $payload;
     }
 
     /**
-     * @param string|MimePart   $data
-     * @param array|null        $caInfo    Information about the trusted CA certificates to use in the verification process
-     * @param array             $rootCerts
+     * Create a temporary file into temporary directory.
+     *
+     * @param string $content
+     * @return string The temporary file generated
+     */
+    public static function getTempFilename($content = null): string
+    {
+        $dir = sys_get_temp_dir();
+        $filename = tempnam($dir, 'phpas2_');
+
+        if ($content) {
+            file_put_contents($filename, $content);
+        }
+
+        return $filename;
+    }
+
+    /**
+     * @param string|MimePart $data
+     * @param array|null $caInfo Information about the trusted CA certificates to use in the verification process
+     * @param array $rootCerts
      *
      * @return bool
      */
     public static function verify($data, $caInfo = null, $rootCerts = null)
     {
+        $filenames = [];
+
         if ($data instanceof MimePart) {
             $temp = MimePart::createIfBinaryPart($data);
             if ($temp !== null) {
                 $data = $temp;
             }
 
-            $data = self::getTempFilename((string) $data);
+            $data = $filenames[] = self::getTempFilename((string)$data);
         }
 
         if (!empty($caInfo)) {
-            foreach ((array) $caInfo as $cert) {
+            foreach ((array)$caInfo as $cert) {
                 $rootCerts[] = self::getTempFilename($cert);
             }
         }
@@ -115,24 +139,28 @@ class CryptoHelper
         $flags |= PKCS7_NOVERIFY;
         // }
 
-        $outFile = self::getTempFilename();
+        $outFile = $filenames[] = self::getTempFilename();
 
         $out = openssl_pkcs7_verify($data, $flags, $outFile, $rootCerts) === true;
+
+        self::purgeTempFiles($filenames);
 
         return $out;
     }
 
     /**
      * @param string|MimePart $data
-     * @param string|array    $cert
-     * @param int|string      $cipher
+     * @param string|array $cert
+     * @param int|string $cipher
      *
      * @return MimePart
      */
     public static function encrypt($data, $cert, $cipher = OPENSSL_CIPHER_AES_128_CBC)
     {
+        $filenames = [];
+
         if ($data instanceof MimePart) {
-            $data = self::getTempFilename((string) $data);
+            $data = $filenames[] = self::getTempFilename((string)$data);
         }
 
         if (is_string($cipher)) {
@@ -143,40 +171,56 @@ class CryptoHelper
             }
         }
 
-        $temp = self::getTempFilename();
-        if (!openssl_pkcs7_encrypt($data, $temp, (array) $cert, [], PKCS7_BINARY, $cipher)) {
-            throw new \RuntimeException(sprintf('Failed to encrypt S/Mime message. Error: "%s".', openssl_error_string()));
+        $temp = $filenames[] = self::getTempFilename();
+
+        if (!openssl_pkcs7_encrypt($data, $temp, (array)$cert, [], PKCS7_BINARY, $cipher)) {
+            throw new \RuntimeException(
+                sprintf('Failed to encrypt S/Mime message. Error: "%s".', openssl_error_string())
+            );
         }
 
-        return MimePart::fromString(file_get_contents($temp), false);
+        $response = MimePart::fromString(file_get_contents($temp), false);
+
+        self::purgeTempFiles($filenames);
+
+        return $response;
     }
 
     /**
      * @param string|MimePart $data
-     * @param mixed           $cert
-     * @param mixed           $key
+     * @param mixed $cert
+     * @param mixed $key
      *
      * @return MimePart
      */
     public static function decrypt($data, $cert, $key = null)
     {
+        $filenames = [];
+
         if ($data instanceof MimePart) {
-            $data = self::getTempFilename((string) $data);
+            $data = $filenames[] = self::getTempFilename((string)$data);
         }
 
-        $temp = self::getTempFilename();
+        $temp = $filenames[] = self::getTempFilename();
+
         if (!openssl_pkcs7_decrypt($data, $temp, $cert, $key)) {
-            throw new \RuntimeException(sprintf('Failed to decrypt S/Mime message. Error: "%s".', openssl_error_string()));
+            throw new \RuntimeException(
+                sprintf('Failed to decrypt S/Mime message. Error: "%s".', openssl_error_string())
+            );
         }
 
-        return MimePart::fromString(file_get_contents($temp));
+        $response = MimePart::fromString(file_get_contents($temp));
+
+        self::purgeTempFiles($filenames);
+
+        return $response;
     }
 
     /**
      * Compress data.
      *
      * @param string|MimePart $data
-     * @param string          $encoding
+     * @param string $encoding
      *
      * @return MimePart
      */
@@ -193,23 +237,23 @@ class CryptoHelper
         }
 
         $headers = [
-            'Content-Type'              => MimePart::TYPE_PKCS7_MIME . '; name="smime.p7z"; smime-type=' . MimePart::SMIME_TYPE_COMPRESSED,
-            'Content-Description'       => 'S/MIME Compressed Message',
-            'Content-Disposition'       => 'attachment; filename="smime.p7z"',
+            'Content-Type' => MimePart::TYPE_PKCS7_MIME . '; name="smime.p7z"; smime-type=' . MimePart::SMIME_TYPE_COMPRESSED,
+            'Content-Description' => 'S/MIME Compressed Message',
+            'Content-Disposition' => 'attachment; filename="smime.p7z"',
             'Content-Transfer-Encoding' => $encoding,
         ];
 
         $content = ASN1Helper::encode(
             [
                 'contentType' => ASN1Helper::COMPRESSED_DATA_OID,
-                'content'     => [
-                    'version'     => 0,
+                'content' => [
+                    'version' => 0,
                     'compression' => [
                         'algorithm' => ASN1Helper::ALG_ZLIB_OID,
                     ],
                     'payload' => [
                         'contentType' => ASN1Helper::DATA_OID,
-                        'content'     => base64_encode(gzcompress($content)),
+                        'content' => base64_encode(gzcompress($content)),
                     ],
                 ],
             ],
@@ -259,20 +303,15 @@ class CryptoHelper
     }
 
     /**
-     * Create a temporary file into temporary directory.
+     * Delete temporary files.
      *
-     * @param string $content
-     *
-     * @return string The temporary file generated
+     * @param array $filenames
+     * @return void
      */
-    public static function getTempFilename($content = null)
+    private static function purgeTempFiles(array $filenames = []): void
     {
-        $dir      = sys_get_temp_dir();
-        $filename = tempnam($dir, 'phpas2_');
-        if ($content) {
-            file_put_contents($filename, $content);
+        foreach ($filenames as $filename) {
+            unlink($filename);
         }
-
-        return $filename;
     }
 }
